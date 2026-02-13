@@ -1,0 +1,10 @@
+[package]
+name = "xtask"
+version = "0.1.0"
+edition = "2021"
+
+# nih_plug_xtask provides the `bundle` subcommand that packages our
+# compiled .dylib into a proper .vst3 bundle with the correct directory
+# structure and metadata for macOS.
+[dependencies]
+nih_plug_xtask = { git = "https://github.com/robbert-vdh/nih-plug" }

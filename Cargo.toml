@@ -1,0 +1,37 @@
+[package]
+name = "loveless-delay-v1"
+version = "0.1.0"
+edition = "2021"
+authors = ["Loveless Audio"]
+license = "GPL-3.0-or-later"
+description = "A delay VST3 plugin built with nih-plug for learning DSP"
+
+# `cdylib` produces a shared library (.dylib on macOS) that the DAW
+# can load as a plugin. Without this, Rust would produce a static
+# library or executable, neither of which a DAW can use.
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+# nih-plug: the Rust plugin framework that handles VST3/CLAP hosting,
+# parameter management, and audio buffer plumbing.
+#
+# `assert_process_allocs`: In debug builds, this panics if any heap
+# allocation happens inside process(). Real-time audio threads must
+# NEVER allocate because malloc can block (waiting for a lock),
+# causing audio dropouts. This feature catches mistakes early.
+nih_plug = { git = "https://github.com/robbert-vdh/nih-plug", features = ["assert_process_allocs"] }
+
+[profile.release]
+# Thin LTO (Link-Time Optimization) lets the compiler optimize across
+# crate boundaries, producing faster code at the cost of longer builds.
+# "thin" is a good compromise between speed and build time.
+lto = "thin"
+# Strip debug symbols from the release binary to reduce file size.
+strip = "symbols"
+
+# A profiling profile that keeps debug info for tools like Instruments.app
+[profile.profiling]
+inherits = "release"
+debug = true
+strip = false
