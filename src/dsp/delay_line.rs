@@ -42,6 +42,8 @@
 //! - `sample_b` is at position 442 (weight 0.3)
 //! - `result = sample_a * 0.7 + sample_b * 0.3`
 
+use std::num::NonZeroUsize;
+
 /// A ring buffer that functions as an audio delay line.
 ///
 /// The buffer is pre-allocated to the maximum possible delay length
@@ -66,18 +68,27 @@ impl DelayLine {
     /// Create a new delay line with the given maximum size in samples.
     ///
     /// # Arguments
-    /// * `max_length` - Maximum number of samples to store. For a 2-second
-    ///   delay at 44100 Hz, this would be 88200.
+    /// * `max_length` - Maximum number of samples to store. Must be at
+    ///   least 1 (enforced by `NonZeroUsize`). For a 2-second delay at
+    ///   44100 Hz, this would be 88200.
+    ///
+    /// # Why `NonZeroUsize`?
+    /// A zero-length ring buffer would cause division by zero in the
+    /// modular arithmetic and usize underflow in the delay clamp. Using
+    /// `NonZeroUsize` makes this a compile-time/call-site concern rather
+    /// than a runtime panic — the same pattern nih-plug uses for channel
+    /// counts (`NonZeroU32` in `AudioIOLayout`).
     ///
     /// # Why pre-allocate?
     /// We allocate the full buffer up front so that changing the delay
     /// time parameter never triggers a memory allocation. The buffer
     /// stays the same size; only the read position changes.
-    pub fn new(max_length: usize) -> Self {
+    pub fn new(max_length: NonZeroUsize) -> Self {
+        let len = max_length.get();
         Self {
-            buffer: vec![0.0; max_length],
+            buffer: vec![0.0; len],
             write_pos: 0,
-            buffer_len: max_length,
+            buffer_len: len,
         }
     }
 
@@ -174,10 +185,16 @@ impl DelayLine {
 mod tests {
     use super::*;
 
+    /// Helper to create a `NonZeroUsize` from a literal in tests.
+    /// Panics if `n` is 0, which is fine for test constants.
+    fn nz(n: usize) -> NonZeroUsize {
+        NonZeroUsize::new(n).unwrap()
+    }
+
     /// Verify basic write-then-read at an exact sample position.
     #[test]
     fn test_write_and_read_exact() {
-        let mut dl = DelayLine::new(100);
+        let mut dl = DelayLine::new(nz(100));
 
         // Write 0.75 at position 0, then advance to position 1.
         dl.write(0.75);
@@ -191,7 +208,7 @@ mod tests {
     /// Verify linear interpolation between two samples.
     #[test]
     fn test_interpolation() {
-        let mut dl = DelayLine::new(100);
+        let mut dl = DelayLine::new(nz(100));
 
         // Write two known values: 0.0 at pos 0, then 1.0 at pos 1.
         dl.write(0.0);
@@ -210,7 +227,7 @@ mod tests {
     /// Verify the buffer wraps correctly past its boundaries.
     #[test]
     fn test_wrapping() {
-        let mut dl = DelayLine::new(4);
+        let mut dl = DelayLine::new(nz(4));
 
         // Write values 0 through 5 into a buffer of size 4.
         // The buffer will contain the last 4 values written.
@@ -234,7 +251,7 @@ mod tests {
     /// Verify that clearing resets everything to silence.
     #[test]
     fn test_clear() {
-        let mut dl = DelayLine::new(10);
+        let mut dl = DelayLine::new(nz(10));
 
         dl.write(0.5);
         dl.advance();
@@ -251,7 +268,7 @@ mod tests {
     /// A buffer initialized to silence should output silence at any delay.
     #[test]
     fn test_silence_in_silence_out() {
-        let dl = DelayLine::new(100);
+        let dl = DelayLine::new(nz(100));
 
         for delay in [1.0, 10.0, 50.0, 99.0] {
             let result = dl.read(delay);
@@ -266,7 +283,7 @@ mod tests {
     /// produces the correct sequence (FIFO behavior).
     #[test]
     fn test_fifo_sequence() {
-        let mut dl = DelayLine::new(10);
+        let mut dl = DelayLine::new(nz(10));
 
         // Write a recognizable sequence: 1, 2, 3, 4, 5
         for i in 1..=5 {

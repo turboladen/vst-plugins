@@ -8,33 +8,32 @@
 //! ## Signal Flow
 //!
 //! ```text
-//! Input ──┬──────────────────────────────────────── × (1 - mix) ──┐
+//! Input ──┬──────────────────────────────────────── × (1 - mix) ───┐
 //!         │                                                        │
-//!         │   ┌──────────────────────────────────────────────┐     │
-//!         │   │              FEEDBACK LOOP                    │     │
-//!         │   │                                              │     │
-//!         └──►(+)──► [Ring Buffer / Delay Line] ──► [Lowpass] │     │
-//!              ▲      (stores & retrieves past     (darkens   │     │
-//!              │       samples after N ms)          repeats)  │     │
-//!              │                    │                  │       │     │
-//!              │                    │                  │       │     │
-//!              │                    ▼                  ▼       │     │
-//!              │              delayed_sample    × feedback ───┘     │
-//!              │                    │                                │
-//!              └────────────────────│────────────────────────────────┘
-//!                                  │                                │
-//!                                  └──── × mix ─────────────────►(+)──► Output
+//!         │    ┌──────────────────────────────────────────────┐    │
+//!         │    │              FEEDBACK LOOP                   │    │
+//!         │    │                                              │    │
+//!         └──►(+)──► [Ring Buffer / Delay Line] ──► [Lowpass] │    │
+//!              ▲      (stores & retrieves past     (darkens   │    │
+//!              │       samples after N ms)          repeats)  │    │
+//!              │                    │                  │      │    │
+//!              │                    │                  │      │    │
+//!              │                    ▼                  ▼      │    │
+//!              │              delayed_sample    × feedback ───┘    │
+//!              │                    │                              │
+//!              └────────────────────│──────────────────────────────┘
+//!                                   │                              │
+//!                                   └──── × mix ─────────────────►(+)──► Output
 //! ```
-
-use nih_plug::prelude::*;
-use std::num::NonZeroU32;
-use std::sync::Arc;
 
 mod dsp;
 mod params;
 
-use dsp::delay_line::DelayLine;
-use dsp::filter::OnePoleFilter;
+use std::num::{NonZeroU32, NonZeroUsize};
+use std::sync::Arc;
+
+use dsp::{delay_line::DelayLine, filter::OnePoleFilter};
+use nih_plug::prelude::*;
 use params::PluginParams;
 
 /// The main plugin struct.
@@ -97,7 +96,7 @@ impl Plugin for LovelessDelay {
     const NAME: &'static str = "Loveless Delay";
     const VENDOR: &'static str = "Loveless Audio";
     const URL: &'static str = "";
-    const EMAIL: &'static str = "";
+    const EMAIL: &'static str = "steve.loveless@gmail.com";
     const VERSION: &'static str = env!("CARGO_PKG_VERSION");
 
     // Supported audio channel layouts. The host will pick the first
@@ -182,12 +181,17 @@ impl Plugin for LovelessDelay {
         //
         // Each sample is an f32 (4 bytes), so at 48 kHz this buffer
         // uses about 400 KB per channel — very modest.
-        let max_delay_samples = (2.1 * self.sample_rate) as usize;
+        const MAX_DELAY_SECONDS: f32 = 2.1;
+        let max_delay_samples = (MAX_DELAY_SECONDS * self.sample_rate) as usize;
 
         // Create fresh delay lines and filters for each channel.
         // We replace any existing ones to handle sample rate changes.
+        // `NonZeroUsize` guarantees the delay line can't be zero-length,
+        // which would cause division-by-zero in ring buffer arithmetic.
+        let max_delay_len =
+            NonZeroUsize::new(max_delay_samples).expect("max delay samples must be > 0");
         self.delay_lines = (0..num_channels)
-            .map(|_| DelayLine::new(max_delay_samples))
+            .map(|_| DelayLine::new(max_delay_len))
             .collect();
 
         self.filters = (0..num_channels).map(|_| OnePoleFilter::new()).collect();
@@ -274,7 +278,7 @@ impl Plugin for LovelessDelay {
             // The result is often fractional (e.g., 441.3 samples for
             // 10.007ms), which is why our delay line supports fractional
             // reads via linear interpolation.
-            let delay_samples = delay_ms * self.sample_rate / 1000.0;
+            let delay_samps = calculate_delay_samples(delay_ms, self.sample_rate);
 
             // Process each audio channel independently.
             for (channel_idx, sample) in channel_samples.iter_mut().enumerate() {
@@ -304,7 +308,7 @@ impl Plugin for LovelessDelay {
                 // If the delay is 500ms at 44100 Hz, we're reading the
                 // sample that was written 22050 samples ago. Linear
                 // interpolation handles fractional positions.
-                let delayed_sample = delay_line.read(delay_samples);
+                let delayed_sample = delay_line.read(delay_samps);
 
                 // Step 2: FILTER the delayed sample through the lowpass.
                 //
@@ -359,13 +363,37 @@ impl Plugin for LovelessDelay {
             }
         }
 
-        // Tell the host we processed successfully. Other options include
-        // `ProcessStatus::Tail(samples)` for effects with decay tails,
-        // and `ProcessStatus::KeepAlive` for instruments that produce
-        // sound without input. For a delay, `Normal` is fine — the host
-        // will keep feeding us audio as long as the track is playing.
-        ProcessStatus::Normal
+        // Tell the host how long our effect tail is so it keeps calling
+        // process() after the input goes silent (e.g., when a region ends
+        // or the track is muted). Without this, the delay echoes would be
+        // cut off abruptly.
+        //
+        // The tail length depends on how many repeats it takes for the
+        // feedback loop to decay to -60 dB (inaudible). Each repeat is
+        // attenuated by the feedback factor, so after N repeats the level
+        // is feedback^N. Solving feedback^N = 0.001 (-60 dB):
+        //
+        //   N = log(0.001) / log(feedback)
+        //
+        // Multiply N by the delay time in samples to get the tail length.
+        let delay_ms = self.params.delay_time.smoothed.next();
+        let feedback = self.params.feedback.smoothed.next();
+        let delay_samps = calculate_delay_samples(delay_ms, self.sample_rate);
+
+        let tail_samples = if feedback > 0.001 {
+            let repeats = -3.0 / feedback.log10(); // log10(0.001) = -3
+            (repeats * delay_samps) as u32
+        } else {
+            // With no feedback, just one delay period for the single echo.
+            delay_samps as u32
+        };
+
+        ProcessStatus::Tail(tail_samples)
     }
+}
+
+const fn calculate_delay_samples(delay_ms: f32, sample_rate: f32) -> f32 {
+    delay_ms * sample_rate / 1000.0
 }
 
 // ─────────────────────────────────────────────────────────────────────
