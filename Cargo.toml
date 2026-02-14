@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 authors = ["Loveless Audio"]
 license = "GPL-3.0-or-later"
-description = "A delay VST3 plugin built with nih-plug for learning DSP"
+description = "A delay plugin (AU/VST3/CLAP) built with nih-plug for learning DSP"
 
 # `cdylib` produces a shared library (.dylib on macOS) that the DAW
 # can load as a plugin. Without this, Rust would produce a static
@@ -21,6 +21,12 @@ crate-type = ["cdylib"]
 # NEVER allocate because malloc can block (waiting for a lock),
 # causing audio dropouts. This feature catches mistakes early.
 nih_plug = { git = "https://github.com/robbert-vdh/nih-plug", features = ["assert_process_allocs"] }
+
+# clap-wrapper: Wraps our CLAP plugin into AUv2 (Audio Unit) format so
+# Logic Pro can load it. Logic Pro only supports Audio Units — not VST3
+# or CLAP. This crate embeds the AudioUnit SDK and VST3 SDK, generating
+# the C entry points that macOS needs to discover the plugin.
+clap-wrapper = "0.2"
 
 [profile.release]
 # Thin LTO (Link-Time Optimization) lets the compiler optimize across

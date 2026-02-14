@@ -1,7 +1,8 @@
-//! # Loveless Delay — A VST3 Delay Plugin
+//! # Loveless Delay — An AU/VST3/CLAP Delay Plugin
 //!
 //! A simple delay effect plugin built with [nih-plug](https://github.com/robbert-vdh/nih-plug)
-//! for learning DSP fundamentals. Every algorithm is implemented from scratch
+//! for learning DSP fundamentals. Outputs Audio Unit (AUv2), VST3, and CLAP
+//! formats from a single codebase. Every algorithm is implemented from scratch
 //! with thorough comments explaining the "why" behind each line of DSP code.
 //!
 //! ## Signal Flow
@@ -411,6 +412,16 @@ impl Vst3Plugin for LovelessDelay {
 // DAW uses to discover and load the plugin. Without these, the compiled
 // .dylib would have no externally visible symbols and the host wouldn't
 // know it's a plugin.
+//
+// nih_export_clap! exports the `clap_entry` symbol for CLAP hosts.
+// nih_export_vst3! exports `GetPluginFactory` for VST3 hosts.
+// clap_wrapper re-exports the CLAP entry point as AUv2 and VST3 via
+// the clap-wrapper crate, so Logic Pro (Audio Units only) can load it.
 
 nih_export_clap!(LovelessDelay);
 nih_export_vst3!(LovelessDelay);
+
+// Wrap our CLAP plugin into AUv2 format for Logic Pro.
+// This generates a `GetPluginFactoryAUV2` entry point that macOS uses
+// to discover the plugin as an Audio Unit component.
+clap_wrapper::export_auv2!();
