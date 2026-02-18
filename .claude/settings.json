@@ -1,0 +1,19 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "just fmt 2>/dev/null; true"
+          }
+        ]
+      },
+      {
+        "matcher": "Edit",
+        "command": "if echo \"$CLAUDE_TOOL_INPUT\" | grep -q 'params.rs' && echo \"$CLAUDE_TOOL_INPUT\" | grep -qE '#\\[id\\s*='; then echo 'BLOCK: Parameter IDs are permanent — renaming breaks saved presets. See CLAUDE.md Gotchas.'; exit 2; fi"
+      }
+    ]
+  }
+}
