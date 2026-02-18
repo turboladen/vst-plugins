@@ -1,9 +1,15 @@
 # CLAUDE.md
 
+## Prerequisites
+
+- [Rust](https://rustup.rs/) (stable toolchain)
+- [just](https://github.com/casey/just) — command runner (`cargo install just`)
+- [dprint](https://dprint.dev/) — markdown formatter (`cargo install dprint`)
+
 ## Commands
 
 ```bash
-just dev          # Full cycle: format → lint → test → build → install
+just dev          # Full cycle: format → lint → test → install
 just bundle       # Build VST3 + CLAP bundles (release)
 just bundle-au    # Build AU component for Logic Pro (release)
 just bundle-debug # Debug build (faster, with assert_process_allocs)
@@ -14,6 +20,8 @@ just test         # cargo test
 just lint         # cargo clippy + cargo fmt --check + dprint check
 just fmt          # cargo fmt + dprint fmt
 just clean        # Remove all build artifacts (including xtask/target)
+just check        # Type-check without producing binary (cargo check)
+just uninstall    # Remove all plugin bundles from system plugin folders
 ```
 
 The xtask bundler is NOT a workspace member — build bundles with `just bundle`, not `cargo build`.
